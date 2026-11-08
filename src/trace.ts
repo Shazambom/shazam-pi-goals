@@ -11,7 +11,7 @@ export function createTrace(directory: string, options: TraceOptions = {}): Trac
       capabilities: options.capabilities ?? [], runtimeVersion: options.runtimeVersion ?? 'unknown',
     }));
     return {
-      beginSession: key => recorder.beginSession(key),
+      beginSession: () => recorder.beginSession(),
       event: (kind, input = {}) => recorder.event(kind, json(Object.fromEntries(
         Object.entries(input).filter(([, value]) => value !== undefined),
       ))),

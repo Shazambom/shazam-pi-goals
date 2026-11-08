@@ -11,7 +11,7 @@ to an interface must be agreed with root before implementation.
 | 2 Trace | Agent: native/src/trace.rs; root: NAPI and TS facade | Real buffered writer, content exclusion, aliases, caps/failures, bounded flush, interval summaries; targeted tests pass | Accepted |
 | 3 Pi adapter | Agent: src/integration.ts, src/index.ts, test/integration.test.ts | Actual hook contract wiring, root/owner fence, commands/tool, saved provenance, cue lifecycle, no lost original inputs; controlled integration tests pass | Accepted |
 | 4 Runtime/package acceptance | Agent: test/runtime.mjs, scripts/test-runtime.sh | Actual installed CLI/SDK and scripted-provider fixture, autoload + task tool/cue + trace path, restart/branch/cancel/error/private-state checks; no model account requests | Accepted |
-| 5 Whole-project review | Fresh independent high review | Nine finder angles, verified candidates, fixes with tests, fresh final verifier | Pending |
+| 5 Whole-project review | Fresh independent high review | Nine finder angles, verified candidates, fixes with tests, fresh final verifier | Final verification |
 | 6 External installation | Root: GitHub push and config pin/deployment | Public repository, accepted-unit commits, remote third-party install in isolated state, then source-controlled Pi setup, loaded-byte/runtime check | Pending |
 
 ## Verification records
@@ -63,6 +63,30 @@ evidence of a fixed product bug. Host admission is synthetic in this fixture.
 Integration checkpoint: 27 Rust tests, 22 TypeScript tests, strict typecheck and
 release addon build passed. The bridge regression confirms missing tool IDs become
 unknown correlation. No account model requests or long-task benchmarks ran.
+
+### Unit 5 — review corrections
+
+Nine independent finder angles and seven fresh candidate verifiers reviewed the
+complete package. Corrections cover canonical ownership paths, provider-compatible
+tool schema, cue preservation on failed-request retries, recorder closure on all
+runtime teardowns, asynchronous saved-history verification, removal of the unused
+trace session identifier and conservative correlation after overlapping requests.
+The overlap defect is established for the core event sequence; its late-callback
+impact in actual Pi remains unmeasured. No latency or model-focus gain is claimed.
+
+Verification after corrections: 27 Rust tests, 33 TypeScript tests, strict
+typecheck and native build passed. The native FIFO test proves Node can service a
+timer while file opening waits; special files remain refused. Controlled races
+cover competing revisions, owner/branch changes, cancellation before/after append
+and nonblocking UI confirmation. Verification does not cancel underlying OS I/O.
+
+The expanded actual CLI fixture passed twice on Pi 1.0.4/Node 22.23.2: 25 scripted
+localhost requests with synthetic admission, then 25 with the deployed lifecycle
+and subagent identity extensions. Both include actual Anthropic request-schema
+capture and a failed request followed by a successful automatic retry. Real host
+admission can create an idle runtime before replacement; the fixture accepts its
+header-only trace and checks active traces separately. No actual T3 UI/bridge run,
+Linux build or long-task model evaluation is claimed.
 
 ## Rust experiment update
 

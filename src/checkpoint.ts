@@ -32,6 +32,6 @@ export function control(action: 'pause' | 'resume' | 'clear'): CheckpointEvent {
 export function renderCue(view: CheckpointView): string | null {
   return native().checkpointRender(json(view));
 }
-export function verifySaved(file: string, sessionId: string, entries: readonly BranchEntry[]): boolean {
+export function verifySaved(file: string, sessionId: string, entries: readonly BranchEntry[]): Promise<boolean> {
   return native().checkpointVerifySaved(file, sessionId, json(relevant(entries)));
 }

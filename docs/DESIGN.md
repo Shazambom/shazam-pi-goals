@@ -17,7 +17,8 @@ the in-process Node bridge; no runtime subprocess, scheduler or provider client.
   Standard Rust bounded channels and buffered I/O replace custom queue algorithms.
   One writer thread; event callbacks never wait for disk. No rotation/retention.
 - `native/src/lib.rs`: NAPI-RS exports, fixed transport errors and async shutdown
-  task. Serde validates core data. No Pi-specific behavior in this binding.
+  tasks for saved-history I/O and shutdown. Serde validates core data. No
+  Pi-specific behavior in this binding.
 - `src/native.ts`, `checkpoint.ts`, `trace.ts`: typed FFI facades and Pi-facing
   JSON-schema declaration. No second core implementation. JSON transport rejects
   non-JSON values/accessors; Rust remains the authoritative note validator.
@@ -58,7 +59,7 @@ not unconditional whole-history scans on every context request.
 
 ## Trace behavior
 
-One exclusive local process file, with per-session headers and no raw content or
+One exclusive local file per extension instance, with session headers and no raw content or
 identifiers. Record available run/turn/request, first provider/text/reasoning/tool,
 response end, tool execution and settlement boundaries. Actual cancellation time
 is unsupported unless a real host notification exists. Unknown phases are never
@@ -70,6 +71,8 @@ unbounded event state. No raw errors/prompts/reasoning/tool arguments/results/pa
 in records. Manual cleanup means cumulative historical disk use is not capped.
 Rust's writer thread owns files; native close waits a bounded interval off Node's
 main thread. This does not guarantee OS I/O cancellation or complete crash durability.
+Every session runtime teardown closes its recorder; session replacement can create
+another file in the same process. The terminal event means recorder end, not process exit.
 Summaries compute elapsed and overlapping-tool union/sum honestly on demand.
 
 ## Build and delivery

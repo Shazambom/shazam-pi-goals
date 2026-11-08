@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 
 interface NativeRecorder {
-  beginSession(key: string): void;
+  beginSession(): void;
   event(kind: string, input: string): void;
   summary(): string;
   close(): Promise<void>;
@@ -11,7 +11,7 @@ interface NativeBinding {
   checkpointReplace(view: string, revision: string, note: string): string;
   checkpointControl(action: string): string;
   checkpointRender(view: string): string | null;
-  checkpointVerifySaved(file: string, sessionId: string, entries: string): boolean;
+  checkpointVerifySaved(file: string, sessionId: string, entries: string): Promise<boolean>;
   NativeTrace: new (directory: string, options: string) => NativeRecorder;
 }
 let binding: NativeBinding | undefined;

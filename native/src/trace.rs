@@ -23,7 +23,7 @@ static FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 enum Kind {
     Header,
     SessionStart,
-    ProcessEnd,
+    RecorderEnd,
     RunStart,
     TurnStart,
     RequestStart,
@@ -328,7 +328,7 @@ impl Recorder {
         Ok(this)
     }
 
-    pub fn begin_session(&mut self, _key: &str) {
+    pub fn begin_session(&mut self) {
         if !self.active() {
             return;
         }
@@ -359,7 +359,7 @@ impl Recorder {
             self.reset_correlations();
         }
         if kind == Kind::RequestStart {
-            self.ambiguous_request = self.request.is_some();
+            self.ambiguous_request |= self.request.is_some();
             self.next_request = self.next_request.saturating_add(1);
             self.request = Some(self.next_request);
             self.first.clear();
@@ -412,7 +412,7 @@ impl Recorder {
         self.admit(record);
         if kind == Kind::MessageEnd {
             self.request = None;
-            self.ambiguous_request = false;
+            // Without request IDs an end cannot prove that all overlaps ended.
             self.first.clear();
         }
         if kind == Kind::Settled {
@@ -497,7 +497,7 @@ impl Recorder {
             return;
         }
         if self.active() {
-            let end = self.record(Kind::ProcessEnd, self.elapsed());
+            let end = self.record(Kind::RecorderEnd, self.elapsed());
             self.admit(end);
         }
         self.closed = true;
@@ -704,7 +704,7 @@ mod tests {
     #[test]
     fn actual_file_has_private_safe_milestones_and_deduplicates_first_arrival() {
         let (_dir, mut recorder) = fixture();
-        recorder.begin_session("SECRET_SESSION");
+        recorder.begin_session();
         at(&mut recorder, Kind::RunStart, 0.0, json!({}));
         at(&mut recorder, Kind::RequestStart, 10.0, json!({}));
         at(
@@ -748,7 +748,7 @@ mod tests {
             1
         );
         assert!(!serde_json::to_string(&data).unwrap().contains("SECRET"));
-        assert_eq!(data.last().unwrap()["event"], "process_end");
+        assert_eq!(data.last().unwrap()["event"], "recorder_end");
         let summary = recorder.summary();
         assert!(
             summary.contains("Request to first event: 10 ms"),
@@ -769,7 +769,7 @@ mod tests {
     #[test]
     fn tool_summary_distinguishes_overlap_union_from_sum() {
         let (_dir, mut recorder) = fixture();
-        recorder.begin_session("s");
+        recorder.begin_session();
         at(&mut recorder, Kind::RunStart, 0.0, json!({}));
         at(
             &mut recorder,
@@ -826,7 +826,7 @@ mod tests {
         let seq = recorder.seq;
         for _ in 0..1000 {
             recorder.event("request_start", json!({}));
-            recorder.begin_session("ignored");
+            recorder.begin_session();
         }
         assert_eq!(recorder.seq, seq);
         recorder.close();
@@ -870,9 +870,9 @@ mod tests {
     #[test]
     fn changed_session_discards_pending_tool_correlation() {
         let (_dir, mut recorder) = fixture();
-        recorder.begin_session("one");
+        recorder.begin_session();
         recorder.event("tool_start", json!({"toolCallId":"id"}));
-        recorder.begin_session("two");
+        recorder.begin_session();
         recorder.event("tool_end", json!({"toolCallId":"id"}));
         recorder.close();
         let rows = records(&recorder);
@@ -988,6 +988,9 @@ mod tests {
     fn request_overlap_is_unknown_not_assigned_to_latest_request() {
         let (_dir, mut recorder) = fixture();
         recorder.event("request_start", json!({}));
+        recorder.event("request_start", json!({}));
+        recorder.event("first_provider_event", json!({}));
+        recorder.event("message_end", json!({}));
         recorder.event("request_start", json!({}));
         recorder.event("first_provider_event", json!({}));
         recorder.event("message_end", json!({}));

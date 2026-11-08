@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [pluginArg, piArg, cliArg] = process.argv.slice(2);
+const actualHosts = process.argv.slice(5);
 assert(pluginArg && piArg && cliArg, 'Explicit plugin, Pi package and real CLI paths required');
 const plugin = resolve(pluginArg), piPackage = resolve(piArg), cli = resolve(cliArg);
 const base = await mkdtemp(join(tmpdir(), 'shazam-goals-runtime-'));
@@ -23,10 +24,12 @@ async function until(predicate, label, ms = 15000) {
 const server = createServer(async (req, res) => {
   responses.add(res); res.on('close', () => responses.delete(res));
   try {
-    assert.equal(req.method, 'POST'); assert.equal(req.url, '/v1/chat/completions');
+    const pathname = new URL(req.url, 'http://fixture').pathname;
+    assert.equal(req.method, 'POST'); assert(['/v1/chat/completions', '/v1/messages'].includes(pathname));
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString()); requests.push(body); providerCalls++;
     const operation = planned; planned = undefined;
+    if (pathname === '/v1/messages') { res.writeHead(400); res.end('{"type":"error","error":{"type":"invalid_request_error","message":"synthetic schema capture"}}'); return; }
     if (operation === 'hold') { held = true; return; }
     if (operation === 'error') { res.writeHead(500); res.end('{"error":{"message":"synthetic failure"}}'); return; }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -57,7 +60,8 @@ async function environment(name) {
 }
 async function launch(env, session, withHost = true) {
   const args = [cli, '--mode', 'rpc', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-mcp', '--session', session];
-  if (withHost) args.push('-e', withHost === true ? host : withHost);
+  if (withHost === true && actualHosts.length) for (const path of actualHosts) args.push('-e', path);
+  else if (withHost) args.push('-e', withHost === true ? host : withHost);
   const child = spawn(process.execPath, args, { cwd: env.home, env: { PATH: process.env.PATH, HOME: env.home, TMPDIR: env.temp, PI_CODING_AGENT_DIR: env.agent, LANG: 'C.UTF-8' }, stdio: ['pipe', 'pipe', 'pipe'] });
   children.add(child); let buffer = '', stderr = '', ended = false; const events = [];
   child.stderr.on('data', data => { stderr += data; });
@@ -105,8 +109,24 @@ try {
   const beforeRestart = checkpointEntries(await saved(session));
   assert.equal(beforeRestart[0].data.note.outcome, 'PRIVATE_OUTCOME_A', 'Earlier snapshot preserved');
   await rpc.stop();
+  const settingsFile = join(env.agent, 'settings.json');
+  const settings = JSON.parse(await readFile(settingsFile, 'utf8'));
+  settings.retry = {enabled:true,maxRetries:1,baseDelayMs:10};
+  await writeFile(settingsFile, JSON.stringify(settings));
   rpc = await launch(env, session);
   assert.equal(result(await rpc.turn({ action: 'read' })).view.note.outcome, 'PRIVATE_OUTCOME_B', 'Restart restores saved note');
+  const retryStart = rpc.events.length, retryRequests = requests.length;
+  planned = 'error';
+  await rpc.command('prompt', {message:'RETRY_TASK_SENTINEL'});
+  await until(() => rpc.events.slice(retryStart).some(e => e.type === 'auto_retry_end' && e.success), 'successful automatic retry');
+  await until(() => rpc.events.slice(retryStart).some(e => e.type === 'agent_settled'), 'retry settlement');
+  assert.equal(requests.length - retryRequests, 2);
+  for (const attempt of requests.slice(retryRequests)) {
+    const text = JSON.stringify(attempt.messages);
+    assert(text.includes('Checkpoint advisory:'), 'Failed attempt and successful retry retain checkpoint cue');
+    assert(text.includes('RETRY_TASK_SENTINEL'), 'Retry preserves original task');
+  }
+  settings.retry = {enabled:false}; await writeFile(settingsFile, JSON.stringify(settings));
   // Branch selection uses the actual installed SDK, then the actual CLI reads it.
   await rpc.stop();
   const branchFile = join(env.home, 'branch.jsonl'); await copyFile(session, branchFile);
@@ -151,33 +171,51 @@ try {
   assert.equal(checkpointEntries(await saved(childSession)).length, 0);
   assert(!JSON.stringify(requests[childRequest].messages).includes('Checkpoint advisory:'), 'Child context has no checkpoint advisory');
   await rpc.stop();
+  const anthropic = await environment('anthropic');
+  const modelsFile = join(anthropic.agent, 'models.json');
+  const models = JSON.parse(await readFile(modelsFile, 'utf8'));
+  models.providers.fixture.api = 'anthropic-messages';
+  models.providers.fixture.baseUrl = endpoint.replace(/\/v1$/, '');
+  await writeFile(modelsFile, JSON.stringify(models));
+  rpc = await launch(anthropic, join(anthropic.home, 'session.jsonl'), false);
+  const schemaRequest = requests.length;
+  const schemaEvents = await rpc.turn('error', 'SCHEMA_TASK_SENTINEL');
+  assert(requests[schemaRequest], JSON.stringify(schemaEvents.filter(e => e.type === 'message_end' && e.message?.role === 'assistant')));
+  const schema = requests[schemaRequest].tools.find(t => t.name === 'task_checkpoint').input_schema;
+  assert.equal(schema.type, 'object');
+  for (const field of ['action','expected_revision','note']) assert(schema.properties[field], `Anthropic receives ${field}`);
+  assert(schema.required.includes('action'));
+  await rpc.stop();
   const traces = [];
-  for (const e of [env, unavailable, childEnv]) {
+  for (const e of [env, unavailable, childEnv, anthropic]) {
     const directory = join(e.agent, 'diagnostics', 'phase-trace');
     for (const file of await readdir(directory)) traces.push(await saved(join(directory, file)));
   }
   assert(traces.length >= 5, 'Each CLI process records trace, including unavailable host');
   for (const records of traces) {
     const text = JSON.stringify(records);
-    for (const secret of ['PRIVATE_', 'ORIGINAL_TASK_SENTINEL', 'CANCEL_TASK_SENTINEL', 'ERROR_TASK_SENTINEL', 'SYNTHETIC_FINAL_CONTENT', 'raw-private-call-', base]) assert(!text.includes(secret), `Trace excludes ${secret}`);
+    for (const secret of ['PRIVATE_', 'ORIGINAL_TASK_SENTINEL', 'CANCEL_TASK_SENTINEL', 'ERROR_TASK_SENTINEL', 'RETRY_TASK_SENTINEL', 'SCHEMA_TASK_SENTINEL', 'SYNTHETIC_FINAL_CONTENT', 'raw-private-call-', base]) assert(!text.includes(secret), `Trace excludes ${secret}`);
     const kinds = records.map(r => r.event);
-    assert(kinds.includes('request_start')); assert(kinds.includes('settled'), JSON.stringify(kinds));
     assert.equal(kinds[0], 'header');
     for (let i = 1; i < records.length; i++) {
       assert(records[i].seq > records[i - 1].seq, 'Record sequence increases');
       assert(records[i].elapsed_ms >= records[i - 1].elapsed_ms, 'Elapsed time is monotonic');
     }
+    // Real host admission can replace a runtime before its first task.
+    if (!kinds.includes('request_start')) { assert(!kinds.includes('run_start')); continue; }
+    assert(kinds.includes('settled'), JSON.stringify(kinds));
     assert(kinds.includes('before_settle'));
     assert(kinds.indexOf('before_settle') < kinds.indexOf('settled'), 'Settlement follows before-settle');
     assert(!records[0].capabilities.includes('cancel_requested'), 'Unobserved cancel timing is not advertised');
     const request = kinds.indexOf('request_start'), provider = kinds.indexOf('first_provider_event');
-    assert(provider > request, 'Provider first event follows request start');
+    if (provider !== -1) assert(provider > request, 'Provider first event follows request start');
+    else assert(records.some(r => r.event === 'message_end' && r.outcome === 'error'));
   }
   const records = traces.flat();
   assert(records.some(r => r.event === 'tool_start')); assert(records.some(r => r.event === 'tool_end'));
   assert(records.some(r => r.outcome === 'aborted'), 'Cancellation outcome recorded');
   assert(records.some(r => r.outcome === 'error'), 'Provider error outcome recorded');
-  console.log(JSON.stringify({ passed: true, node: process.version, pi: JSON.parse(await readFile(join(piPackage, 'package.json'), 'utf8')).version, scriptedProviderRequests: providerCalls, traceProcesses: traces.length, proof: ['manifest autoload', 'native checkpoint save/read', 'provider cue and original task', 'snapshot independence', 'restart', 'SDK branch + CLI restore', 'RPC confirmed/declined control and pause ownership', 'RPC abort', 'provider error', 'missing-host task continuation', 'child suppression', 'content-free traces'], limits: ['Synthetic host admission; production host not qualified', 'No model quality or long-task benchmark', 'No sandbox-level network isolation; fixture credentials and provider are local-only'] }));
+  console.log(JSON.stringify({ passed: true, node: process.version, pi: JSON.parse(await readFile(join(piPackage, 'package.json'), 'utf8')).version, scriptedProviderRequests: providerCalls, traceFiles: traces.length, host: actualHosts.length ? 'actual supplied extensions' : 'synthetic admission', proof: ['manifest autoload', 'native checkpoint save/read', 'provider cue and original task', 'snapshot independence', 'restart', 'SDK branch + CLI restore', 'RPC confirmed/declined control and pause ownership', 'RPC abort', 'provider error', 'successful retry retains cue', 'actual Anthropic schema conversion', 'missing-host task continuation', 'child suppression', 'content-free traces'], limits: ['No model quality or long-task benchmark', 'No sandbox-level network isolation; fixture credentials and provider are local-only'] }));
 } finally {
   for (const child of children) { child.kill('SIGKILL'); }
   for (const response of responses) response.destroy();

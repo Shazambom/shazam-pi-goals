@@ -31,12 +31,36 @@ pub fn checkpoint_render(view: String) -> Result<Option<String>> {
     Ok(checkpoint::render(&parse(&view)?))
 }
 #[napi]
-pub fn checkpoint_verify_saved(file: String, session_id: String, entries: String) -> Result<bool> {
-    Ok(checkpoint::verify_saved(
-        &file,
-        &session_id,
-        &parse(&entries)?,
-    ))
+pub fn checkpoint_verify_saved(
+    file: String,
+    session_id: String,
+    entries: String,
+) -> AsyncTask<VerifySavedTask> {
+    AsyncTask::new(VerifySavedTask {
+        file,
+        session_id,
+        entries,
+    })
+}
+
+pub struct VerifySavedTask {
+    file: String,
+    session_id: String,
+    entries: String,
+}
+impl Task for VerifySavedTask {
+    type Output = bool;
+    type JsValue = bool;
+    fn compute(&mut self) -> Result<bool> {
+        Ok(checkpoint::verify_saved(
+            &self.file,
+            &self.session_id,
+            &parse(&self.entries)?,
+        ))
+    }
+    fn resolve(&mut self, _env: Env, output: bool) -> Result<bool> {
+        Ok(output)
+    }
 }
 
 #[napi]
@@ -54,9 +78,9 @@ impl NativeTrace {
         })
     }
     #[napi]
-    pub fn begin_session(&mut self, key: String) {
+    pub fn begin_session(&mut self) {
         if let Some(recorder) = &mut self.recorder {
-            recorder.begin_session(&key);
+            recorder.begin_session();
         }
     }
     #[napi]

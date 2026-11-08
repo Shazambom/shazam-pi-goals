@@ -33,7 +33,7 @@ export interface TraceInput {
   usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
 }
 export interface TraceRecorder {
-  beginSession(key: string): void;
+  beginSession(): void;
   event(kind: TraceKind, input?: TraceInput): void;
   summary(): Promise<string>;
   close(): Promise<void>;

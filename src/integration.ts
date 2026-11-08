@@ -66,12 +66,14 @@ function relevant(entries: readonly BranchEntry[]): readonly BranchEntry[] {
 }
 
 /** Translate Pi lifecycle facts; checkpoint and trace policy stays in the core. */
-export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void {
+export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder,
+  verifyHistory: typeof verifySaved = verifySaved): void {
   let owner: Admission | undefined;
   let view = restoreCheckpoint([]);
   let saved = false;
   let cue: string | null = null;
   let cuePending = false;
+  let requestHadCue = false;
   let stopped = false;
   let aborted = false;
   let forkSuppressed = false;
@@ -80,7 +82,28 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
   let removeAbortListener: (() => void) | undefined;
   let trace: TraceRecorder | undefined;
   let traceAttempted = false;
+  let epoch = 0;
+  let operations = Promise.resolve();
   const notices = new Set<string>();
+
+  function serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const result = operations.then(operation);
+    operations = result.then(() => undefined, () => undefined);
+    return result;
+  }
+  function invalidate(): number {
+    epoch++;
+    cue = null; saved = false; cuePending = false; requestHadCue = false;
+    return epoch;
+  }
+  function branchIdentity(ctx: GoalContext): string {
+    return JSON.stringify(ctx.sessionManager.getBranch().map(entry => entry.id));
+  }
+  function requireCurrent(ctx: GoalContext, expected: Admission, token: number, signal?: AbortSignal): void {
+    if (token !== epoch || !sameOwner(expected, admit(ctx)) || ctx.signal?.aborted || signal?.aborted) {
+      throw new Error('Checkpoint owner, branch or execution changed. Read current state before retrying.');
+    }
+  }
 
   function notify(ctx: GoalContext, message: string): void {
     try { ctx.ui.notify(message, 'warning'); } catch { /* UI is not task authority. */ }
@@ -100,7 +123,8 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
       if (identities.length !== 1 || owners.length !== 1) return undefined;
       const identity = object(identities[0]), lifecycle = object(owners[0]);
       const normalized = canonical(file);
-      if (identity?.status !== 'root' || identity.sessionFile !== file || lifecycle?.managed !== true ||
+      if (identity?.status !== 'root' || typeof identity.sessionFile !== 'string' ||
+          canonical(identity.sessionFile) !== normalized || lifecycle?.managed !== true ||
           lifecycle.status !== 'owned' || lifecycle.sessionFile !== normalized ||
           typeof lifecycle.generation !== 'string' || !lifecycle.generation) return undefined;
       const next = { file: normalized, session, generation: lifecycle.generation };
@@ -109,33 +133,48 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
       return next;
     } catch { return undefined; }
   }
-  function refresh(ctx: GoalContext): void {
+  async function refresh(ctx: GoalContext, token: number, signal?: AbortSignal): Promise<boolean> {
+    if (token !== epoch) return false;
     cue = null; saved = false;
     const admitted = admit(ctx);
-    if (!admitted) return;
+    if (!admitted) return false;
+    requireCurrent(ctx, admitted, token, signal);
     const entries = ctx.sessionManager.getBranch();
-    view = restoreCheckpoint(entries);
-    const persisted = relevant(entries);
-    saved = verifySaved(admitted.file, admitted.session, persisted);
+    const branch = branchIdentity(ctx);
+    const persisted = structuredClone(relevant(entries));
+    const nextView = restoreCheckpoint(persisted);
     const forked = forkSession || Boolean(ctx.sessionManager.getHeader?.()?.parentSession);
-    forkSuppressed = forked && !persisted.some(entry => {
+    const nextForkSuppressed = forked && !persisted.some(entry => {
       const data = object(entry.data);
       return entry.customType === ACTIVATION_ENTRY && data?.version === 1 && data.sessionId === admitted.session;
     });
+    const verified = await verifyHistory(admitted.file, admitted.session, persisted);
+    requireCurrent(ctx, admitted, token, signal);
+    if (branchIdentity(ctx) !== branch || JSON.stringify(relevant(ctx.sessionManager.getBranch())) !== JSON.stringify(persisted)) {
+      throw new Error('Checkpoint branch changed during verification. Read current state before retrying.');
+    }
+    view = nextView; saved = verified; forkSuppressed = nextForkSuppressed;
     if (saved && !forkSuppressed) cue = renderCue(view);
+    return true;
   }
-  function refreshSafely(ctx: GoalContext): void {
+  async function refreshSafely(ctx: GoalContext, token: number, signal?: AbortSignal): Promise<boolean> {
+    if (token !== epoch) return false;
     currentContext = ctx;
-    try { refresh(ctx); } catch { cue = null; saved = false; }
+    try { return await refresh(ctx, token, signal); } catch {
+      if (token === epoch) { cue = null; saved = false; }
+      return false;
+    }
   }
-  function append(ctx: GoalContext, expected: Admission, event: CheckpointEvent): void {
-    if (!sameOwner(expected, admit(ctx)) || ctx.signal?.aborted) throw new Error('Checkpoint owner changed or command was cancelled.');
+  async function append(ctx: GoalContext, expected: Admission, token: number, event: CheckpointEvent,
+    signal?: AbortSignal): Promise<void> {
+    requireCurrent(ctx, expected, token, signal);
     const previousRevision = view.revision;
     let failed = false;
     try { pi.appendEntry(CHECKPOINT_ENTRY, event); } catch { failed = true; }
-    refreshSafely(ctx);
+    const refreshed = await refreshSafely(ctx, token, signal);
+    requireCurrent(ctx, expected, token, signal);
     cuePending = true;
-    if (failed || !saved || view.revision === previousRevision) throw new Error('Checkpoint save uncertain. Read current state before retrying.');
+    if (failed || !refreshed || !saved || view.revision === previousRevision) throw new Error('Checkpoint save uncertain. Read current state before retrying.');
   }
   function traceEvent(kind: Parameters<TraceRecorder['event']>[0], input?: TraceInput): void {
     try { trace?.event(kind, input); } catch {
@@ -147,7 +186,7 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
       traceAttempted = true;
       try { trace = makeTrace(); } catch { once(ctx, 'Phase tracing could not start; task execution continues.'); }
     }
-    try { trace?.beginSession(ctx.sessionManager.getSessionId()); } catch {
+    try { trace?.beginSession(); } catch {
       once(ctx, 'Phase tracing is unavailable; task execution continues.');
     }
   }
@@ -159,24 +198,27 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
   pi.registerTool({
     name: 'task_checkpoint', label: 'Task checkpoint',
     description: 'Read or replace the branch task note: outcome, next deliverable and sourced decisions. Read before retrying an uncertain write. This note grants no execution authority.',
-    parameters: Type.Union([
-      Type.Object({ action: Type.Literal('read') }, { additionalProperties: false }),
-      Type.Object({ action: Type.Literal('replace'), expected_revision: Type.Union([Type.String(), Type.Null()]), note: noteSchema }, { additionalProperties: false }),
-    ]),
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal('read'), Type.Literal('replace')]),
+      expected_revision: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      note: Type.Optional(noteSchema),
+    }, { additionalProperties: false }),
     async execute(_id, parameters, signal, _onUpdate, ctx) {
       const admitted = admit(ctx);
       if (!admitted) throw new Error(UNAVAILABLE);
-      if (signal?.aborted || ctx.signal?.aborted) throw new Error('Checkpoint request was cancelled.');
-      refreshSafely(ctx);
-      const params = object(parameters);
-      if (params?.action === 'read') return result();
-      if (params?.action !== 'replace' || !(params.expected_revision === null || typeof params.expected_revision === 'string')) {
-        throw new Error('Invalid checkpoint request.');
-      }
-      const event = replacement(view, params.expected_revision, params.note);
-      if (signal?.aborted) throw new Error('Checkpoint request was cancelled.');
-      append(ctx, admitted, event);
-      return result();
+      const token = epoch;
+      return serialize(async () => {
+        requireCurrent(ctx, admitted, token, signal);
+        if (!await refreshSafely(ctx, token, signal)) throw new Error('Checkpoint changed during verification. Read current state before retrying.');
+        const params = object(parameters);
+        if (params?.action === 'read') return result();
+        if (params?.action !== 'replace' || !(params.expected_revision === null || typeof params.expected_revision === 'string')) {
+          throw new Error('Invalid checkpoint request.');
+        }
+        const event = replacement(view, params.expected_revision, params.note);
+        await append(ctx, admitted, token, event, signal);
+        return result();
+      });
     },
   });
 
@@ -186,9 +228,16 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
       try {
         const admitted = admit(ctx);
         if (!admitted) { once(ctx, UNAVAILABLE); return; }
-        refreshSafely(ctx);
+        const token = epoch;
         const action = args.trim();
-        if (!action) { ctx.ui.notify(display(result().details), 'info'); return; }
+        if (!action) {
+          await serialize(async () => {
+            requireCurrent(ctx, admitted, token);
+            if (!await refreshSafely(ctx, token)) throw new Error('Checkpoint changed during verification.');
+            ctx.ui.notify(display(result().details), 'info');
+          });
+          return;
+        }
         if (action !== 'pause' && action !== 'resume' && action !== 'clear') {
           notify(ctx, 'Usage: /checkpoint [pause|resume|clear]'); return;
         }
@@ -199,19 +248,21 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
         }
         const confirmed = await ctx.ui.confirm('Task checkpoint', `Confirm ${action} of the checkpoint advisory? This does not start or stop agent work.`);
         if (confirmed !== true) return;
-        if (!sameOwner(admitted, admit(ctx)) || ctx.signal?.aborted) {
-          notify(ctx, 'Checkpoint session changed or command was cancelled; no change was made.'); return;
-        }
-        append(ctx, admitted, control(action));
-        if (action === 'resume' && (forkSession || ctx.sessionManager.getHeader?.()?.parentSession)) {
-          // A fork cannot inherit its parent's activation. This marker is native
-          // branch history, not execution permission or diagnostic content.
-          pi.appendEntry(ACTIVATION_ENTRY, { version: 1, sessionId: admitted.session });
-          refreshSafely(ctx);
-          if (!saved || forkSuppressed) throw new Error('Checkpoint activation save uncertain.');
-        }
-        cuePending = action === 'resume';
-        ctx.ui.notify(`Checkpoint advisory ${action === 'clear' ? 'cleared' : action === 'pause' ? 'paused' : 'resumed'}.`, 'info');
+        await serialize(async () => {
+          requireCurrent(ctx, admitted, token);
+          if (!await refreshSafely(ctx, token)) throw new Error('Checkpoint changed during verification.');
+          await append(ctx, admitted, token, control(action));
+          if (action === 'resume' && (forkSession || ctx.sessionManager.getHeader?.()?.parentSession)) {
+            // A fork cannot inherit its parent's activation. This marker is native
+            // branch history, not execution permission or diagnostic content.
+            requireCurrent(ctx, admitted, token);
+            pi.appendEntry(ACTIVATION_ENTRY, { version: 1, sessionId: admitted.session });
+            if (!await refreshSafely(ctx, token) || !saved || forkSuppressed) throw new Error('Checkpoint activation save uncertain.');
+          }
+          requireCurrent(ctx, admitted, token);
+          cuePending = action === 'resume';
+          ctx.ui.notify(`Checkpoint advisory ${action === 'clear' ? 'cleared' : action === 'pause' ? 'paused' : 'resumed'}.`, 'info');
+        });
       } catch { notify(ctx, 'Checkpoint control failed or its save is uncertain. Inspect state before retrying.'); }
     },
   });
@@ -223,20 +274,25 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
     },
   });
 
-  pi.on('session_start', (event, ctx) => {
+  pi.on('session_start', async (event, ctx) => {
+    const token = invalidate();
     removeAbortListener?.(); removeAbortListener = undefined;
     owner = undefined; stopped = false; aborted = false; notices.clear();
     view = restoreCheckpoint([]); forkSession = event.reason === 'fork'; forkSuppressed = forkSession;
-    refreshSafely(ctx); cuePending = true;
     if (!admit(ctx)) once(ctx, UNAVAILABLE);
     startTrace(ctx);
+    await serialize(async () => {
+      if (await refreshSafely(ctx, token)) cuePending = true;
+    });
   });
-  for (const event of ['session_tree', 'session_compact']) pi.on(event, (_event, ctx) => {
-    refreshSafely(ctx); cuePending = true;
+  for (const event of ['session_tree', 'session_compact']) pi.on(event, async (_event, ctx) => {
+    const token = invalidate();
+    await serialize(async () => { if (await refreshSafely(ctx, token)) cuePending = true; });
   });
-  pi.on('input', (event, ctx) => {
+  pi.on('input', async (event, ctx) => {
     if (event.source === 'interactive' || event.source === 'rpc') {
-      aborted = false; refreshSafely(ctx); cuePending = true;
+      const token = invalidate(); aborted = false;
+      await serialize(async () => { if (await refreshSafely(ctx, token)) cuePending = true; });
     }
     return { action: 'continue' };
   });
@@ -250,13 +306,16 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
     if (alreadyPresent) return { messages };
     return { messages: [...messages, { role: 'custom', customType: CUE_TYPE, content: cue, display: false, timestamp: Date.now() }] };
   });
-  pi.on('before_provider_request', () => { cuePending = false; traceEvent('request_start'); });
+  pi.on('before_provider_request', () => {
+    requestHadCue = cuePending && cue !== null && saved && !aborted && !forkSuppressed;
+    cuePending = false; traceEvent('request_start');
+  });
   pi.on('agent_start', (_event, ctx) => {
     currentContext = ctx;
     removeAbortListener?.();
     const signal = ctx.signal;
     if (signal) {
-      const suppress = () => { aborted = true; cuePending = false; };
+      const suppress = () => { invalidate(); aborted = true; };
       if (signal.aborted) suppress();
       else signal.addEventListener('abort', suppress, { once: true });
       removeAbortListener = () => signal.removeEventListener('abort', suppress);
@@ -277,7 +336,9 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
     const message = object(event.message);
     if (message?.role !== 'assistant') return;
     const outcome = message.stopReason === 'aborted' ? 'aborted' : message.stopReason === 'error' ? 'error' : 'ok';
-    if (outcome === 'aborted') { aborted = true; cuePending = false; }
+    if (outcome === 'error' && requestHadCue && !aborted) cuePending = true;
+    requestHadCue = false;
+    if (outcome === 'aborted') { invalidate(); aborted = true; }
     const usage = object(message.usage);
     const numbers: NonNullable<TraceInput['usage']> = {};
     for (const key of ['input', 'output', 'cacheRead', 'cacheWrite'] as const) {
@@ -295,20 +356,18 @@ export function registerGoals(pi: GoalPi, makeTrace: () => TraceRecorder): void 
   }));
   pi.on('agent_before_settle', event => {
     if (object(event.signal)?.aborted === true || event.signal instanceof AbortSignal && event.signal.aborted) {
-      aborted = true; cuePending = false;
+      invalidate(); aborted = true;
     }
     traceEvent('before_settle');
   });
   pi.on('agent_settled', event => {
-    if (event.aborted === true) { aborted = true; cuePending = false; }
+    if (event.aborted === true) { invalidate(); aborted = true; }
     removeAbortListener?.(); removeAbortListener = undefined;
     traceEvent('settled', { outcome: event.aborted === true ? 'aborted' : 'ok' });
   });
   pi.on('session_shutdown', async event => {
-    stopped = true; cue = null; cuePending = false;
+    invalidate(); stopped = true;
     removeAbortListener?.(); removeAbortListener = undefined;
-    if (event.reason === 'quit' || event.reason === 'reload') {
-      try { await trace?.close(); } catch { /* Recording cannot block ordinary cleanup. */ }
-    }
+    try { await trace?.close(); } catch { /* Recording cannot block ordinary cleanup. */ }
   });
 }

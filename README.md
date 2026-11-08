@@ -19,6 +19,16 @@ cargo test --manifest-path native/Cargo.toml --locked
 Bash scripts own build/install orchestration; NAPI-RS supplies the native binding.
 The dependency locks are committed. Native output is generated and not committed.
 
+The actual-runtime fixture takes resolved executable/package paths, avoiding any
+Pi setup wrapper. Optional host extensions replace its synthetic ownership fixture:
+
+```bash
+bash scripts/test-runtime.sh "$PWD" "$pi_package" "$pi_cli" "$pi_node" [host-extension ...]
+```
+
+It uses isolated state and scripted localhost providers. macOS arm64 with Pi 1.0.4
+and Node 22.23.2 is qualified; Linux and the full T3 bridge remain untested.
+
 ## Installation
 
 After a release or reviewed commit is published:
