@@ -1,6 +1,7 @@
 mod checkpoint;
+mod trace;
 
-use napi::{Error, Result};
+use napi::{bindgen_prelude::AsyncTask, Env, Error, Result, Task};
 use napi_derive::napi;
 use serde_json::Value;
 
@@ -38,3 +39,57 @@ pub fn checkpoint_verify_saved(file: String, session_id: String, entries: String
     ))
 }
 
+#[napi]
+pub struct NativeTrace {
+    recorder: Option<trace::Recorder>,
+}
+#[napi]
+impl NativeTrace {
+    #[napi(constructor)]
+    pub fn new(directory: String, options: String) -> Result<Self> {
+        Ok(Self {
+            recorder: Some(
+                trace::Recorder::new(&directory, parse(&options)?).map_err(Error::from_reason)?,
+            ),
+        })
+    }
+    #[napi]
+    pub fn begin_session(&mut self, key: String) {
+        if let Some(recorder) = &mut self.recorder {
+            recorder.begin_session(&key);
+        }
+    }
+    #[napi]
+    pub fn event(&mut self, kind: String, input: String) -> Result<()> {
+        if let Some(recorder) = &mut self.recorder {
+            recorder.event(&kind, parse(&input)?);
+        }
+        Ok(())
+    }
+    #[napi]
+    pub fn summary(&mut self) -> String {
+        self.recorder
+            .as_mut()
+            .map(|r| r.summary())
+            .unwrap_or_else(|| "Trace recorder closed".into())
+    }
+    #[napi]
+    pub fn close(&mut self) -> AsyncTask<CloseTask> {
+        AsyncTask::new(CloseTask(self.recorder.take()))
+    }
+}
+
+pub struct CloseTask(Option<trace::Recorder>);
+impl Task for CloseTask {
+    type Output = ();
+    type JsValue = ();
+    fn compute(&mut self) -> Result<()> {
+        if let Some(mut recorder) = self.0.take() {
+            recorder.close();
+        }
+        Ok(())
+    }
+    fn resolve(&mut self, _env: Env, _output: ()) -> Result<()> {
+        Ok(())
+    }
+}

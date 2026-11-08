@@ -8,7 +8,7 @@ to an interface must be agreed with root before implementation.
 | --- | --- | --- | --- |
 | 0 Foundation | Root: contracts, metadata, design/tasks | Strict TS, pinned package metadata, public-safe modular spec, no-op entry | Accepted |
 | 1 Checkpoint | Agent: native/src/checkpoint.rs; root: NAPI and TS facade | Valid schema, branch reconstruction, stale update refusal, isolated snapshots, pause ownership, clear/restart, bounded escaped cues; targeted tests pass | Accepted |
-| 2 Trace | Agent: native/src/trace.rs; root: NAPI and TS facade | Real buffered writer, content exclusion, aliases, caps/failures, bounded flush, interval summaries; targeted tests pass | Pending |
+| 2 Trace | Agent: native/src/trace.rs; root: NAPI and TS facade | Real buffered writer, content exclusion, aliases, caps/failures, bounded flush, interval summaries; targeted tests pass | Accepted |
 | 3 Pi adapter | Agent: src/integration.ts, src/index.ts, test/integration.test.ts | Actual hook contract wiring, root/owner fence, commands/tool, saved provenance, cue lifecycle, no lost original inputs; controlled integration tests pass | Pending |
 | 4 Runtime/package acceptance | Agent: test/runtime.mjs, scripts/test-runtime.sh | Actual installed CLI/SDK and scripted-provider fixture, autoload + task tool/cue + trace path, restart/branch/cancel/error/private-state checks; no model account requests | Pending |
 | 5 Whole-project review | Fresh independent high review | Nine finder angles, verified candidates, fixes with tests, fresh final verifier | Pending |
@@ -28,6 +28,15 @@ ten TypeScript-to-native checkpoint tests passed. The addon built with Cargo 1.9
 on macOS arm64; selected Pi Node 22.23.2 loaded it. Strict TypeScript passed. Runtime
 provenance remains the adapter/runtime units' responsibility. NAPI-RS, serde and the
 source-build script are included here as the minimum bridge for this accepted unit.
+
+### Unit 2 — phase recorder
+
+Thirteen focused Rust tests and `cargo check` passed. Short review checked the
+allowlisted record fields, bounded queue/maps/file, writer ownership, duplicate-ID
+ambiguity, failure paths and summary calculations. Duplicate IDs retain ambiguity
+until the next session/run boundary. Standard channels and buffered I/O avoid an
+extra logging framework. Shutdown waits off Node's main thread, but cannot cancel
+stalled filesystem I/O; live summaries disclose buffering. Clippy was unavailable.
 
 ## Rust experiment update
 
