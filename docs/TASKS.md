@@ -9,7 +9,7 @@ to an interface must be agreed with root before implementation.
 | 0 Foundation | Root: contracts, metadata, design/tasks | Strict TS, pinned package metadata, public-safe modular spec, no-op entry | Accepted |
 | 1 Checkpoint | Agent: native/src/checkpoint.rs; root: NAPI and TS facade | Valid schema, branch reconstruction, stale update refusal, isolated snapshots, pause ownership, clear/restart, bounded escaped cues; targeted tests pass | Accepted |
 | 2 Trace | Agent: native/src/trace.rs; root: NAPI and TS facade | Real buffered writer, content exclusion, aliases, caps/failures, bounded flush, interval summaries; targeted tests pass | Accepted |
-| 3 Pi adapter | Agent: src/integration.ts, src/index.ts, test/integration.test.ts | Actual hook contract wiring, root/owner fence, commands/tool, saved provenance, cue lifecycle, no lost original inputs; controlled integration tests pass | Pending |
+| 3 Pi adapter | Agent: src/integration.ts, src/index.ts, test/integration.test.ts | Actual hook contract wiring, root/owner fence, commands/tool, saved provenance, cue lifecycle, no lost original inputs; controlled integration tests pass | Accepted |
 | 4 Runtime/package acceptance | Agent: test/runtime.mjs, scripts/test-runtime.sh | Actual installed CLI/SDK and scripted-provider fixture, autoload + task tool/cue + trace path, restart/branch/cancel/error/private-state checks; no model account requests | Pending |
 | 5 Whole-project review | Fresh independent high review | Nine finder angles, verified candidates, fixes with tests, fresh final verifier | Pending |
 | 6 External installation | Root: GitHub push and config pin/deployment | Public repository, accepted-unit commits, remote third-party install in isolated state, then source-controlled Pi setup, loaded-byte/runtime check | Pending |
@@ -37,6 +37,16 @@ ambiguity, failure paths and summary calculations. Duplicate IDs retain ambiguit
 until the next session/run boundary. Standard channels and buffered I/O avoid an
 extra logging framework. Shutdown waits off Node's main thread, but cannot cancel
 stalled filesystem I/O; live summaries disclose buffering. Clippy was unavailable.
+
+### Unit 3 — Pi adapter
+
+Eleven controlled adapter tests passed on Node 22 and 26; strict TypeScript passed.
+The installed Pi SDK loaded the package and registered the commands/tool, turning
+the initial registration assertion green. Short review checked root ownership,
+confirmation rechecks, silent/uncertain saves, fork activation, input preservation,
+abort suppression and fixed trace projection. Native UI confirmation is limited
+to explicit control commands because host commands lack input-source provenance.
+These checks do not qualify actual T3 routing or the full CLI lifecycle.
 
 ## Rust experiment update
 
