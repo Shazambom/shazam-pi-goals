@@ -10,7 +10,7 @@ to an interface must be agreed with root before implementation.
 | 1 Checkpoint | Agent: native/src/checkpoint.rs; root: NAPI and TS facade | Valid schema, branch reconstruction, stale update refusal, isolated snapshots, pause ownership, clear/restart, bounded escaped cues; targeted tests pass | Accepted |
 | 2 Trace | Agent: native/src/trace.rs; root: NAPI and TS facade | Real buffered writer, content exclusion, aliases, caps/failures, bounded flush, interval summaries; targeted tests pass | Accepted |
 | 3 Pi adapter | Agent: src/integration.ts, src/index.ts, test/integration.test.ts | Actual hook contract wiring, root/owner fence, commands/tool, saved provenance, cue lifecycle, no lost original inputs; controlled integration tests pass | Accepted |
-| 4 Runtime/package acceptance | Agent: test/runtime.mjs, scripts/test-runtime.sh | Actual installed CLI/SDK and scripted-provider fixture, autoload + task tool/cue + trace path, restart/branch/cancel/error/private-state checks; no model account requests | Pending |
+| 4 Runtime/package acceptance | Agent: test/runtime.mjs, scripts/test-runtime.sh | Actual installed CLI/SDK and scripted-provider fixture, autoload + task tool/cue + trace path, restart/branch/cancel/error/private-state checks; no model account requests | Accepted |
 | 5 Whole-project review | Fresh independent high review | Nine finder angles, verified candidates, fixes with tests, fresh final verifier | Pending |
 | 6 External installation | Root: GitHub push and config pin/deployment | Public repository, accepted-unit commits, remote third-party install in isolated state, then source-controlled Pi setup, loaded-byte/runtime check | Pending |
 
@@ -47,6 +47,22 @@ confirmation rechecks, silent/uncertain saves, fork activation, input preservati
 abort suppression and fixed trace projection. Native UI confirmation is limited
 to explicit control commands because host commands lack input-source provenance.
 These checks do not qualify actual T3 routing or the full CLI lifecycle.
+
+### Unit 4 — actual CLI and package boundary
+
+`bash scripts/test-runtime.sh` passed against Pi 1.0.4 and Node 22.23.2 on macOS
+arm64: 22 scripted localhost requests, five CLI processes. It exercised manifest
+autoload, Rust-backed save/read, advisory context with original input, snapshot
+independence, restart, SDK branch selection followed by CLI restore, confirmed and
+declined RPC controls, pause ownership, abort, provider errors, unavailable/child
+host behavior and content-free traces. Short review distinguished injected cues
+from tool-result text and checked process cleanup and isolated credentials.
+The initial behavioral failure was a fixture canonical-path mismatch; this is not
+evidence of a fixed product bug. Host admission is synthetic in this fixture.
+
+Integration checkpoint: 27 Rust tests, 22 TypeScript tests, strict typecheck and
+release addon build passed. The bridge regression confirms missing tool IDs become
+unknown correlation. No account model requests or long-task benchmarks ran.
 
 ## Rust experiment update
 
