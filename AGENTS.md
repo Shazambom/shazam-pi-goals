@@ -3,8 +3,8 @@
 A modular Pi extension combining advisory task checkpoints and local phase traces.
 Read docs/DESIGN.md and docs/TASKS.md before changing module contracts.
 
-- Prefer Bash for setup, packaging, installation and test orchestration. Runtime
-  extension code uses strict TypeScript because Pi and selected libraries require it.
+- Prefer Bash for setup, packaging, installation and test orchestration. The core
+  uses Rust; strict TypeScript is limited to Pi and native-binding translation.
 - Keep checkpoint policy, passive trace recording and Pi lifecycle wiring separate.
   No new scheduler, provider client, completion controller or database.
 - Do not log prompts, reasoning, tool arguments/results, credentials or raw errors.

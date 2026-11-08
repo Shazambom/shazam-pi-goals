@@ -1,3 +1,5 @@
 node_modules/
 .private/
 *.tgz
+native/target/
+native/*.node

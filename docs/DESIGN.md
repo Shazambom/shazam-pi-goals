@@ -1,68 +1,88 @@
 # Design
 
-One installable Pi package; three modules. No automatic continuation or completion
-review. Checkpoints are advisory state, not execution authority. Traces are passive
-and content-free. One package loading entry enables the combined capability.
+One installable Pi package combines advisory task checkpoints and passive phase
+traces. A small TypeScript translation layer registers Pi tools, commands and
+hooks. Rust owns note validation/reconstruction/rendering, saved-history inspection,
+trace projection/correlation, bounded file writing and summaries. NAPI-RS supplies
+the in-process Node bridge; no runtime subprocess, scheduler or provider client.
 
-## Checkpoint core
+## Interfaces and ownership
 
-`src/checkpoint.ts` exports `restoreCheckpoint(entries): CheckpointView`,
-`replacement(view, expectedRevision, input): CheckpointEvent`,
-`control(action): CheckpointEvent`, and `renderCue(view): string | null`.
-Contracts are in `src/contracts.ts`. Invalid replacement throws a fixed-message
-error, never echoing raw input. Restore ignores malformed/unknown entries. Only
-entries from the current branch are supplied. Replacement validates one versioned
-note using TypeBox, 8 KiB encoded maximum, copies ingress and egress, and rejects
-stale revisions. Human pause is a separate control entry; replacements never undo
-it. Clear preserves pause. No operation-ID journal, duplicate task status or typed
-TODO synchronization. Cues are escaped and capped at 1,200 Unicode code points.
+- `native/src/checkpoint.rs`: typed serde note/events behind JSON transport;
+  `restore`, `replacement`, `control`, `render`, `verify_saved`. Current-branch fold,
+  revision guard, cloned values, human pause separate from model updates. Saved
+  history is inspected read-only and never repaired. Caps are code constants.
+- `native/src/trace.rs`: `Recorder::new`, `begin_session`, `event`, `summary`,
+  `close`. Fixed allowlist, monotonic clock, local aliases and bounded resources.
+  Standard Rust bounded channels and buffered I/O replace custom queue algorithms.
+  One writer thread; event callbacks never wait for disk. No rotation/retention.
+- `native/src/lib.rs`: NAPI-RS exports, fixed transport errors and async shutdown
+  task. Serde validates core data. No Pi-specific behavior in this binding.
+- `src/native.ts`, `checkpoint.ts`, `trace.ts`: typed FFI facades and Pi-facing
+  JSON-schema declaration. No second core implementation. JSON transport rejects
+  non-JSON values/accessors; Rust remains the authoritative note validator.
+- `src/integration.ts` and `index.ts`: Pi lifecycle/tool/command translation,
+  source/owner admission, cached cue eligibility and package composition.
 
-## Trace core
+`src/contracts.ts` documents the bridge's public shapes. Changes require agreement
+with root and corresponding Rust/bridge tests. Host TypeBox supplies tool schema;
+serde supplies Rust types/validation; NAPI-RS supplies native ABI; standard Rust
+primitives supply writer/channel ownership. No SonicBoom dependency remains.
 
-`src/trace.ts` exports `createTrace(directory, options?): TraceRecorder`.
-Production options permit declared capability names/runtime version and a fixed
-error-code notice callback; injected clock/limits/writer for tests must remain
-clearly test seams. Use monotonic time, one exclusive process file and session
-segment aliases. No raw session/tool IDs or content is persisted. Request starts
-and run starts allocate local aliases; missing/ambiguous correlation is unknown.
-First milestones record once per request; concurrent tools use bounded aliases.
+## Checkpoint behavior
 
-Use SonicBoom asynchronous writes, capped buffer and no unbounded write retries.
-Proposed defaults: 2 KiB record, 256 KiB buffer, 256 correlation entries, 8 MiB file,
-250 ms awaited shutdown flush. Limits are code constants, not optimal measurements.
-No retained event state after disabling. No automatic retention/rotation; users
-clean up historical files. Flush timeout does not guarantee filesystem cancellation.
-Summaries are computed on demand from the bounded file and show missing data,
-overlap-aware tool union/sum and no false provider-compute claims.
+One sourced note per branch: outcome, next deliverable, sourced decisions, optional
+blocker. No duplicate task-status machine, standalone IDs or typed TODO sync.
+`task_checkpoint` supports read and revision-checked whole replacement. A conflict
+requires read/reconcile; no exact retry-receipt promise. `checkpoint` inspects or
+pauses/resumes/clears the cue. Agent replacement cannot undo a human pause.
 
-## Pi integration
+The installed host runs extension command handlers without input-source provenance.
+Therefore control mutations require native UI confirmation; absent confirmation
+fails that command closed. Ordinary reads/writes/startup/tasks never prompt. This
+is not a claim that RPC automation is authenticated human input.
 
-`src/integration.ts` registers tool `task_checkpoint` (read/replace) and commands
-`checkpoint` (inspect/pause/resume/clear) and `phase-trace`. `src/index.ts` composes
-modules. It supplies current branch entries and checks canonical saved-entry
-identity after mutations/recovery; live-only state is never called durable.
+Checkpoint writes/cues require exactly one matching root identity and owned session
+from existing host events. Missing/ambiguous responders suppress only checkpoint
+functionality; tracing remains available. No private config paths are imported.
+Forks inherit notes as history but require a confirmed current-session activation
+entry before cues resume. Abort suppresses the affected execution. Resume/tree/
+compaction/revision/external-input boundaries refresh cached notes/cues; unchanged
+ordinary requests do not receive repeated reminders. Original messages stay intact.
 
-Checkpoint mutations/cues require a single root identity and current owned session
-from the installed host's existing identity/lifecycle event contracts. Missing or
-ambiguous contracts disable only checkpoint actions with an actionable notice;
-passive trace remains available on ordinary Pi. No private paths are imported.
-Human control commands require actual interactive/RPC command provenance supported
-by the host; don't infer authorization from arbitrary role text. Read/replace is
-model-callable; pause/resume state is not. Fork starts cue-suppressed until explicit
-human resume. Abort suppresses the current execution. Rebuild on startup/resume,
-tree/fork and compaction. Cache note/cue on changes, not every context request.
+Use an 8 KiB record cap and 1,200-code-point cue cap, with escaped controls and
+explicit omissions. These are proposed engineering bounds, not proven optima.
+Canonical saved-state visibility is bounded; missing/corrupt/oversized history is
+unknown, never repaired or described as durable. Checks happen at changes/recovery,
+not unconditional whole-history scans on every context request.
 
-Cue eligibility follows changed revision, recovery and external user input. Append
-at most one custom advisory while preserving original messages. No repeated cue
-on unchanged ordinary requests; no new model call. Verify request/context ordering.
-Trace maps only available hooks, advertises missing milestones and never invents
-cancel-request timestamps from aborted results. Tool failure, trace failure or
-unavailable host contracts must preserve the caller's original work.
+## Trace behavior
 
-## Delivery and accepted limits
+One exclusive local process file, with per-session headers and no raw content or
+identifiers. Record available run/turn/request, first provider/text/reasoning/tool,
+response end, tool execution and settlement boundaries. Actual cancellation time
+is unsupported unless a real host notification exists. Unknown phases are never
+zero, and client timings never claim provider queue/compute separation.
 
-Bash orchestrates tests/install; strict TypeScript owns runtime APIs. Dependencies
-are pinned and no package lifecycle scripts are used. Test with synthetic providers,
-private temporary state and the resolved actual Pi CLI. Test package installation
-from GitHub, not a local import alone. Public repository contains no private sessions
-or campaign data. Goal focus remains unproven even when all runtime tests pass.
+Bound record bytes, queued records, correlation maps and admitted file bytes. At
+capacity/error, drop or stop recording with fixed-code diagnostics; retain no
+unbounded event state. No raw errors/prompts/reasoning/tool arguments/results/paths
+in records. Manual cleanup means cumulative historical disk use is not capped.
+Rust's writer thread owns files; native close waits a bounded interval off Node's
+main thread. This does not guarantee OS I/O cancellation or complete crash durability.
+Summaries compute elapsed and overlapping-tool union/sum honestly on demand.
+
+## Build and delivery
+
+Bash orchestrates build/test/install. `npm install` runs the reviewed Bash native
+build script, using installed Cargo and a C linker; it never installs a toolchain.
+This deliberate exception to the earlier no-build-script sketch is required by the
+user's Rust experiment. `Cargo.lock` and package-lock pin dependency resolution.
+The source-build path initially targets macOS/Linux; only platforms actually tested
+are qualified. NAPI-RS generates a Node-API addon usable by the selected Node runtime.
+
+Each accepted unit gets its own commit after tests and short source review. Then
+/code-review high, fixes and fresh final verification. Push public source only,
+install the remote pinned Git package in isolated Pi state, then configure/deploy
+through the existing config repository init path. Never hand-edit deployed defaults.
+Synthetic providers prove the exercised runtime path, not improved model focus.
