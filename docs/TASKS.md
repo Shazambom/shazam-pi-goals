@@ -11,8 +11,8 @@ to an interface must be agreed with root before implementation.
 | 2 Trace | Agent: native/src/trace.rs; root: NAPI and TS facade | Real buffered writer, content exclusion, aliases, caps/failures, bounded flush, interval summaries; targeted tests pass | Accepted |
 | 3 Pi adapter | Agent: src/integration.ts, src/index.ts, test/integration.test.ts | Actual hook contract wiring, root/owner fence, commands/tool, saved provenance, cue lifecycle, no lost original inputs; controlled integration tests pass | Accepted |
 | 4 Runtime/package acceptance | Agent: test/runtime.mjs, scripts/test-runtime.sh | Actual installed CLI/SDK and scripted-provider fixture, autoload + task tool/cue + trace path, restart/branch/cancel/error/private-state checks; no model account requests | Accepted |
-| 5 Whole-project review | Fresh independent high review | Nine finder angles, verified candidates, fixes with tests, fresh final verifier | Final verification |
-| 6 External installation | Root: GitHub push and config pin/deployment | Public repository, accepted-unit commits, remote third-party install in isolated state, then source-controlled Pi setup, loaded-byte/runtime check | Pending |
+| 5 Whole-project review | Fresh independent high review | Nine finder angles, verified candidates, fixes with tests, fresh final verifier | Accepted |
+| 6 External installation | Root: GitHub push and config pin/deployment | Public repository, accepted-unit commits, remote third-party install in isolated state, then source-controlled Pi setup, loaded-byte/runtime check | Accepted |
 
 ## Verification records
 
@@ -87,6 +87,31 @@ capture and a failed request followed by a successful automatic retry. Real host
 admission can create an idle runtime before replacement; the fixture accepts its
 header-only trace and checks active traces separately. No actual T3 UI/bridge run,
 Linux build or long-task model evaluation is claimed.
+
+A fresh final verifier checked the corrected source and aggregate evidence at
+`6e37d489941d7b04a384f4300b9891081bb16f5d`, supporting a high review with no remaining
+findings. Dependency lock entries were not individually audited.
+
+### Unit 6 — external installation and deployment
+
+The public GitHub repository was created and the six accepted work-unit commits
+were pushed. Pi installed the exact reviewed commit from its remote Git URL in
+isolated agent state. Its normal dependency installation built the native addon
+from Rust source with existing Cargo. The installed checkout passed another
+25-request CLI fixture with the deployed lifecycle/identity extension paths.
+
+The configuration repository declared that Git pin and deployed it through
+`init.sh --pi`. Its package mapper needed a correction to preserve remote sources;
+the actual isolated setup regression failed before that correction and passed after.
+The configuration change was committed separately as `14543a8` without including
+unrelated existing edits. A fresh configured Pi RPC process resolved the package,
+loaded the native addon and registered both `checkpoint` and `phase-trace`.
+The installed Git SHA matched the reviewed commit; native hashes were recorded
+privately. Registration used no provider request. The remote-copy runtime test
+used only the local scripted provider. Existing sessions require reload/restart.
+
+The setup emitted an unrelated existing render-width patch warning. RPC readiness
+and package loading succeeded. Full T3 integration and Linux remain unqualified.
 
 ## Rust experiment update
 
